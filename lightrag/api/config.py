@@ -260,6 +260,7 @@ def parse_args() -> argparse.Namespace:
             "aws_bedrock",
             "jina",
             "gemini",
+            "voyage",
         ],
         help="Embedding binding type (default: from env or ollama)",
     )

@@ -83,3 +83,8 @@ CLAUDE.md
 
 # Google Jules
 .jules/
+
+# Student data and generated indices
+student_index.json
+.env.voyage-pro
+By Student/

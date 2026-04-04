@@ -320,6 +320,7 @@ def create_app(args):
         "aws_bedrock",
         "jina",
         "gemini",
+        "voyage",
     ]:
         raise Exception("embedding binding not supported")
 
@@ -713,6 +714,10 @@ def create_app(args):
                 from lightrag.llm.lollms import lollms_embed
 
                 provider_func = lollms_embed
+            elif binding == "voyage":
+                from lightrag.llm.anthropic import anthropic_embed
+
+                provider_func = anthropic_embed
 
             # Extract attributes if provider is an EmbeddingFunc
             if provider_func and isinstance(provider_func, EmbeddingFunc):
@@ -857,6 +862,22 @@ def create_app(args):
                     if model:
                         kwargs["model"] = model
                     return await actual_func(**kwargs)
+                elif binding == "voyage":
+                    from lightrag.llm.anthropic import anthropic_embed
+
+                    actual_func = (
+                        anthropic_embed.func
+                        if isinstance(anthropic_embed, EmbeddingFunc)
+                        else anthropic_embed
+                    )
+                    # Pass model only if provided, let function use its default (voyage-3)
+                    kwargs = {
+                        "texts": texts,
+                        "api_key": api_key,
+                    }
+                    if model:
+                        kwargs["model"] = model
+                    return await actual_func(**kwargs)
                 else:  # openai and compatible
                     from lightrag.llm.openai import openai_embed
 
@@ -950,8 +971,8 @@ def create_app(args):
     # Determine send_dimensions value based on binding type
     # Jina and Gemini REQUIRE dimension parameter (forced to True)
     # OpenAI and others: controlled by EMBEDDING_SEND_DIM environment variable
-    if args.embedding_binding in ["jina", "gemini"]:
-        # Jina and Gemini APIs require dimension parameter - always send it
+    if args.embedding_binding in ["jina", "gemini", "voyage"]:
+        # Jina, Gemini, and Voyage APIs require dimension parameter - always send it
         send_dimensions = has_embedding_dim_param
         dimension_control = f"forced by {args.embedding_binding.title()} API"
     else:
@@ -1312,6 +1333,62 @@ def create_app(args):
         except Exception as e:
             logger.error(f"Error getting health status: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
+
+    # Student index endpoint
+    @app.get("/student-index", dependencies=[Depends(combined_auth)])
+    async def get_student_index():
+        """Get the student transcript index"""
+        import json
+
+        index_path = Path(os.getcwd()) / "student_index.json"
+        if index_path.exists():
+            with open(index_path, "r") as f:
+                return json.load(f)
+        return {"students": [], "files": [], "total_students": 0, "total_files": 0}
+
+    # Live folder browser endpoint
+    @app.get("/student-folders", dependencies=[Depends(combined_auth)])
+    async def get_student_folders():
+        """Get live folder structure from By Student directory"""
+        base_path = Path("/Users/thelaw/By Student")
+        
+        def scan_folder(path: Path) -> list:
+            items = []
+            try:
+                for item in sorted(path.iterdir()):
+                    if item.name.startswith('.'):
+                        continue
+                    if item.is_dir():
+                        children = scan_folder(item)
+                        items.append({
+                            "name": item.name,
+                            "path": str(item),
+                            "type": "folder",
+                            "children": children
+                        })
+                    else:
+                        items.append({
+                            "name": item.name,
+                            "path": str(item),
+                            "type": "file"
+                        })
+            except PermissionError:
+                pass
+            return items
+        
+        students = []
+        try:
+            for student_dir in sorted(base_path.iterdir()):
+                if student_dir.is_dir() and not student_dir.name.startswith('.'):
+                    students.append({
+                        "name": student_dir.name,
+                        "path": str(student_dir),
+                        "files": scan_folder(student_dir)
+                    })
+        except Exception:
+            pass
+        
+        return {"students": students}
 
     # Custom StaticFiles class for smart caching
     class SmartStaticFiles(StaticFiles):  # Renamed from NoCacheStaticFiles
